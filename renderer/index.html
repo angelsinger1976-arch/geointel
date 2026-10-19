@@ -48,6 +48,13 @@
         <button class="chip">Cáucaso Sur (Armenia–Azerbaiyán)</button>
       </div>
 
+      <div class="field news-field">
+        <label for="newsUrl">🔗 Enlace de una noticia (opcional)</label>
+        <input type="text" id="newsUrl" autocomplete="off" spellcheck="false"
+          placeholder="https://…  (pega el enlace de una noticia y GEOINTEL leerá su contenido y buscará más noticias actuales)" />
+        <span class="field-hint">Si pegas un enlace, la IA leerá esa noticia y buscará en Google otras noticias y hechos recientes relacionados para construir el informe.</span>
+      </div>
+
       <div class="controls-row">
         <div class="field">
           <label for="template">Plantilla de informe</label>
@@ -100,6 +107,15 @@
       </div>
 
       <article class="report" id="report"></article>
+
+      <section class="sources" id="sourcesPanel" style="display:none">
+        <div class="sources-head">
+          <span class="live-dot"></span>
+          <span id="sourcesTitle">Fuentes y búsquedas en vivo</span>
+        </div>
+        <div class="sources-widget" id="searchWidget" style="display:none"></div>
+        <div class="sources-body" id="sourcesBody"></div>
+      </section>
     </section>
 
   </main>
@@ -142,10 +158,20 @@
         </div>
       </div>
 
+      <label class="check">
+        <input type="checkbox" id="useSearch" checked />
+        <span>
+          <strong>Buscar en Google en tiempo real</strong>
+          <em>El modelo consulta noticias actuales para anclar el informe a la fecha de hoy (recomendado).</em>
+        </span>
+      </label>
+
       <div class="note">
+        🌐 <strong>Informes anclados a HOY:</strong> GEOINTEL inyecta la fecha actual en cada informe y activa la <em>búsqueda de Google en tiempo real</em> (Grounding) para citar noticias y hechos recientes en lugar de reciclar datos antiguos.<br>
+        🔗 <strong>Enlace de noticia:</strong> si pegas un enlace, la IA lee su contenido (herramienta de contexto de URL) y busca más noticias relacionadas para ampliar y verificar.<br>
         🔁 <strong>Conmutación automática (fallback):</strong> si el modelo principal falla o no está disponible, GEOINTEL reintenta automáticamente con los siguientes modelos de la cadena (Gemini 4 Argon → 3.8 Flash → 3.6 Flash → 3.5 Flash-Lite → 3.1 Flash-Lite → 3.1 Pro → 3 Flash).<br>
         💡 <strong>Sin API key</strong> la app funciona en <em>modo plantilla</em>: genera el esqueleto completo del informe con tu tema insertado, listo para completar.<br>
-        🔗 Consigue tu clave gratuita en
+        🔑 Consigue tu clave gratuita en
         <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
       </div>
 

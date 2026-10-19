@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('geointel', {
   // Suscripciones a eventos de streaming
   onChunk: (cb) => ipcRenderer.on('gemini:chunk', (_e, d) => cb(d)),
   onModel: (cb) => ipcRenderer.on('gemini:model', (_e, d) => cb(d)),
+  onSources: (cb) => ipcRenderer.on('gemini:sources', (_e, d) => cb(d)),
   onDone: (cb) => ipcRenderer.on('gemini:done', (_e, d) => cb(d)),
   onError: (cb) => ipcRenderer.on('gemini:error', (_e, d) => cb(d))
 });

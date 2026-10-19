@@ -8,6 +8,7 @@
 /* ---------- Referencias DOM ---------- */
 const $ = (id) => document.getElementById(id);
 const topicEl      = $('topic');
+const newsUrlEl    = $('newsUrl');
 const templateEl   = $('template');
 const depthEl      = $('depth');
 const languageEl   = $('language');
@@ -25,10 +26,16 @@ const connStatus   = $('connStatus');
 const connText     = $('connText');
 const toastEl      = $('toast');
 
+const sourcesPanel = $('sourcesPanel');
+const sourcesBody  = $('sourcesBody');
+const sourcesTitle = $('sourcesTitle');
+const searchWidget = $('searchWidget');
+
 const settingsModal = $('settingsModal');
 const apiKeyEl      = $('apiKey');
 const modelEl       = $('model');
 const thinkingLevelEl = $('thinkingLevel');
+const useSearchEl   = $('useSearch');
 
 /* ---------- Estado ---------- */
 const BRIDGE = window.geointel || null;   // Puente Electron (si existe)
@@ -36,9 +43,28 @@ let currentMarkdown = '';
 let isGenerating = false;
 let activeReqId = null;
 let currentModelUsed = '';
+let currentGrounding = { sources: [], queries: [], urls: [] };
 
 const LANG_NAMES = { es: 'español', en: 'inglés', pt: 'portugués', fr: 'francés' };
-const DEFAULT_CONFIG = { apiKey: '', model: 'gemini-3.8-flash', thinkingLevel: 'auto' };
+const DEFAULT_CONFIG = { apiKey: '', model: 'gemini-3.8-flash', thinkingLevel: 'auto', useSearch: true };
+
+/* ---------- Fecha actual (ancla temporal de los informes) ---------- */
+const DIAS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const MESES_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+function fechaActualEs() {
+  const d = new Date();
+  return `${DIAS_ES[d.getDay()]}, ${d.getDate()} de ${MESES_ES[d.getMonth()]} de ${d.getFullYear()}`;
+}
+function anioActual() { return new Date().getFullYear(); }
+
+/* Detecta si un texto contiene al menos una URL http(s). */
+function extractUrls(text) {
+  const m = String(text || '').match(/https?:\/\/[^\s"'<>()]+/gi);
+  return m ? m.map((u) => u.replace(/[.,;]+$/, '')) : [];
+}
+
 
 /* Cadena de modelos para el fallback automático (de más a menos capacidad).
    El modelo elegido por el usuario se intenta SIEMPRE primero. */
@@ -54,17 +80,29 @@ const MODEL_CHAIN = [
 
 /* Construye la lista ordenada de intentos: el modelo principal primero,
    después el resto de la cadena. Si hay un nivel de razonamiento fijado,
-   se añade un intento extra sin él (por si el modelo no lo soporta). */
-function buildAttempts(primaryModel, thinkingLevel) {
+   se añade un intento extra sin él (por si el modelo no lo soporta).
+   Si la búsqueda está activada, se añade al final una red de seguridad
+   SIN herramientas (por si algún modelo rechazara el uso de tools). */
+function buildAttempts(primaryModel, thinkingLevel, useSearch, hasUrl) {
   const chain = [primaryModel, ...MODEL_CHAIN.filter((m) => m !== primaryModel)];
   const attempts = [];
   const useThinking = thinkingLevel && thinkingLevel !== 'auto';
+  const search = !!useSearch;
+
   for (const model of chain) {
-    if (useThinking) attempts.push({ model, thinkingLevel });
-    attempts.push({ model, thinkingLevel: null });
+    if (useThinking) attempts.push({ model, thinkingLevel, useSearch: search, hasUrl: !!hasUrl });
+    attempts.push({ model, thinkingLevel: null, useSearch: search, hasUrl: !!hasUrl });
+  }
+
+  // Red de seguridad: reintenta los primeros modelos SIN herramientas.
+  if (search) {
+    for (const model of chain.slice(0, 3)) {
+      attempts.push({ model, thinkingLevel: null, useSearch: false, hasUrl: false });
+    }
   }
   return attempts;
 }
+
 
 /* Configuración de generación compatible con los modelos Gemini 3.x/4.x.
    NO se envían temperature/top_p/top_k (deprecados → HTTP 400). */
@@ -141,35 +179,42 @@ const SECTIONS = {
 5. **Impacto Global** — repercusiones geopolíticas, energéticas, financieras y en cadenas de suministro globales.`
 };
 
-function buildPrompt(topic, templateKey, depth, lang) {
+function buildPrompt(topic, templateKey, depth, lang, newsUrl, useSearch) {
   const depthInstr = depth === 'ejecutivo'
-    ? 'Elabora un INFORME EJECUTIVO conciso y directo (aprox. 900–1.400 palabras), priorizando lo esencial y las conclusiones accionables.'
-    : 'Elabora un DOSSIER EXTENSO Y DETALLADO (mínimo 2.500–4.000 palabras), con desarrollo profundo de cada apartado, datos y matices contrapuestos.';
+    ? 'Elabora un INFORME EJECUTIVO conciso y directo (aprox. 900\u20131.400 palabras), priorizando lo esencial y las conclusiones accionables.'
+    : 'Elabora un DOSSIER EXTENSO Y DETALLADO (m\u00ednimo 2.500\u20134.000 palabras), con desarrollo profundo de cada apartado, datos y matices contrapuestos.';
 
-  const langInstr = `Redacta TODO el informe íntegramente en ${LANG_NAMES[lang] || 'español'}.`;
+  const langInstr = `Redacta TODO el informe \u00edntegramente en ${LANG_NAMES[lang] || 'espa\u00f1ol'}.`;
 
-  return `${PERSONA}
+  // Ancla temporal: obliga a trabajar con la situaci\u00f3n de HOY.
+  const fecha = fechaActualEs();
+  const anio = anioActual();
+  const fechaInstr = `FECHA ACTUAL: hoy es ${fecha} (a\u00f1o ${anio}). Construye el informe sobre la situaci\u00f3n ACTUAL a esta fecha. Prohibido presentar como actuales hechos de a\u00f1os anteriores; cualquier dato hist\u00f3rico debe ir etiquetado como contexto.`;
 
-Tu objetivo es realizar una investigación exhaustiva y actualizada sobre el siguiente conflicto, región o acontecimiento mundial:
+  // B\u00fasqueda en vivo.
+  const searchInstr = useSearch
+    ? `B\u00daSQUEDA EN VIVO (obligatoria): usa la herramienta de b\u00fasqueda de Google para localizar y verificar las noticias y hechos M\u00c1S RECIENTES (de las \u00faltimas semanas, en ${anio}). Cita cada fuente con su medio y fecha. Contrasta al menos 3\u20135 fuentes internacionales de primer nivel y descarta informaci\u00f3n desactualizada.`
+    : `No tienes b\u00fasqueda web activada: s\u00e9 expl\u00edcito sobre la incertidumbre y evita presentar como actuales datos que no puedas fechar en ${anio}.`;
 
-"""${topic}"""
+  // Enlace de noticia aportado por el usuario.
+  let newsBlock = '';
+  const urls = extractUrls(newsUrl);
+  if (urls.length) {
+    newsBlock = `\n\nENLACE DE NOTICIA APORTADO POR EL USUARIO (punto de partida):\n${urls.map((u) => `- ${u}`).join('\n')}\n` +
+      `Instrucciones sobre el enlace:\n` +
+      `1. LEE el contenido de esa(s) URL(s) con la herramienta de contexto de URL (url context).\n` +
+      `2. A partir de ella, BUSCA en Google noticias y hechos relacionados M\u00c1S RECIENTES para ampliar, actualizar y verificar la informaci\u00f3n (no te limites a esa noticia).\n` +
+      `3. Contrasta el enlace con otras fuentes; se\u00f1ala coincidencias, matices y posibles sesgos o desmentidos.\n` +
+      `4. Integra todo ello en el informe, citando el enlace original y las nuevas fuentes encontradas.\n`;
+  }
 
-Debes buscar y contrastar las noticias internacionales MÁS RECIENTES con precedentes históricos documentados.
-
-${SECTIONS[templateKey] || SECTIONS.full7}
-
-${depthInstr}
-${langInstr}
-
-${RIGOR}
-
-Comienza directamente con el título del informe y desarrolla cada apartado con encabezados numerados.`;
+  return `${PERSONA}\n\nTu objetivo es realizar una investigaci\u00f3n exhaustiva y ACTUALIZADA sobre el siguiente conflicto, regi\u00f3n o acontecimiento mundial:\n\n"""${topic}"""\n\n${fechaInstr}\n${searchInstr}${newsBlock}\n\nDebes buscar y contrastar las noticias internacionales M\u00c1S RECIENTES con precedentes hist\u00f3ricos documentados.\n\n${SECTIONS[templateKey] || SECTIONS.full7}\n\n${depthInstr}\n${langInstr}\n\n${RIGOR}\n\nComienza directamente con el t\u00edtulo del informe y desarrolla cada apartado con encabezados numerados.`;
 }
 
 /* ============================================================
    MODO PLANTILLA (sin API key)
    ============================================================ */
-function buildTemplateReport(topic, templateKey, depth, lang) {
+function buildTemplateReport(topic, templateKey, depth, lang, newsUrl) {
   const base = {
     full7: [
       ['1. Panorama Actual (Hechos Clave en Tiempo Real)', 'Resume aquí los hechos más recientes verificados por agencias internacionales (Reuters, AP, AFP, BBC, EFE…). Indica fechas y fuentes. Describe el estado exacto de la situación sobre el terreno.'],
@@ -202,7 +247,9 @@ function buildTemplateReport(topic, templateKey, depth, lang) {
     ? '> *Modo ejecutivo: desarrollo breve y directo.*'
     : '> *Modo dossier extenso: desarrollo profundo de cada apartado.*';
 
-  let md = `# Informe de Inteligencia Geopolítica\n\n**Tema analizado:** ${topic}\n\n**Plantilla:** ${templateKey === 'full7' ? '7 apartados' : templateKey === 'full6' ? '6 apartados' : '5 apartados'} · **Idioma:** ${LANG_NAMES[lang] || 'español'}\n\n${depthNote}\n\n---\n\n`;
+  const urls = extractUrls(newsUrl);
+  const newsLine = urls.length ? `**Enlace de noticia de partida:** ${urls.join(', ')}\n\n` : '';
+  let md = `# Informe de Inteligencia Geopolítica\n\n**Fecha del informe:** ${fechaActualEs()}\n\n**Tema analizado:** ${topic}\n\n${newsLine}**Plantilla:** ${templateKey === 'full7' ? '7 apartados' : templateKey === 'full6' ? '6 apartados' : '5 apartados'} · **Idioma:** ${LANG_NAMES[lang] || 'español'}\n\n${depthNote}\n\n---\n\n`;
 
   sections.forEach(([title, guidance]) => {
     md += `## ${title}\n\n_${guidance}_\n\n_(Completa este apartado con datos verificados, fuentes y análisis.)_\n\n`;
@@ -216,7 +263,7 @@ function buildTemplateReport(topic, templateKey, depth, lang) {
    MOTOR DE GENERACIÓN — Gemini (con fallback en cadena)
    ============================================================ */
 
-// Vía IPC (Electron). El proceso principal gestiona el fallback.
+// V\u00eda IPC (Electron). El proceso principal gestiona el fallback.
 async function generateViaBridge({ apiKey, attempts, prompt }) {
   const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   activeReqId = requestId;
@@ -224,33 +271,82 @@ async function generateViaBridge({ apiKey, attempts, prompt }) {
   const res = await BRIDGE.generate({ requestId, apiKey, attempts, prompt });
   if (res && res.ok === false) throw new Error(res.error || 'Error desconocido de Gemini');
   if (res && res.model) currentModelUsed = res.model;
+  if (res && res.grounding) { currentGrounding = res.grounding; renderSources(); }
   return res;
 }
 
-// Vía fetch directo (navegador). Gemini permite CORS.
+// Acumula la metadata de grounding de un candidato (fuentes y consultas).
+function collectGrounding(candidate, grounding) {
+  let changed = false;
+  if (!candidate) return changed;
+
+  const gm = candidate.groundingMetadata;
+  if (gm) {
+    if (Array.isArray(gm.webSearchQueries)) {
+      for (const q of gm.webSearchQueries) {
+        if (q && !grounding.queries.includes(q)) { grounding.queries.push(q); changed = true; }
+      }
+    }
+    if (Array.isArray(gm.groundingChunks)) {
+      for (const c of gm.groundingChunks) {
+        const web = c && c.web;
+        if (web && web.uri && !grounding.sources.some((s) => s.uri === web.uri)) {
+          grounding.sources.push({ uri: web.uri, title: web.title || web.uri });
+          changed = true;
+        }
+      }
+    }
+    if (gm.searchEntryPoint && gm.searchEntryPoint.renderedContent && !grounding.searchWidget) {
+      grounding.searchWidget = gm.searchEntryPoint.renderedContent;
+      changed = true;
+    }
+  }
+
+  const ucm = candidate.urlContextMetadata;
+  if (ucm && Array.isArray(ucm.urlMetadata)) {
+    for (const u of ucm.urlMetadata) {
+      const key = (u.retrievedUrl || '') + '|' + (u.urlRetrievalStatus || '');
+      if (u.retrievedUrl && !grounding.urls.some((x) => x.key === key)) {
+        grounding.urls.push({ key, url: u.retrievedUrl, status: u.urlRetrievalStatus || '' });
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+// V\u00eda fetch directo (navegador). Gemini permite CORS.
 async function generateViaFetch({ apiKey, attempts, prompt, signal }) {
   const errors = [];
 
   for (let i = 0; i < attempts.length; i++) {
-    const { model, thinkingLevel } = attempts[i];
+    const { model, thinkingLevel, useSearch, hasUrl } = attempts[i];
     let gotChunks = false;
+    const grounding = { sources: [], queries: [], urls: [], searchWidget: null };
 
     try {
       currentModelUsed = model;
-      setOutputState('live', `Gemini ${model} · intento ${i + 1}/${attempts.length}…`);
+      const tag = useSearch ? ' \u00b7 b\u00fasqueda Google' : '';
+      setOutputState('live', `Gemini ${model} \u00b7 intento ${i + 1}/${attempts.length}${tag}\u2026`);
 
       const url =
         `https://generativelanguage.googleapis.com/v1beta/models/` +
         `${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
 
+      const body = {
+        systemInstruction: { parts: [{ text: PERSONA + '\n\n' + RIGOR }] },
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: buildGenConfig(thinkingLevel)
+      };
+      const tools = [];
+      if (useSearch) tools.push({ googleSearch: {} });
+      if (hasUrl) tools.push({ urlContext: {} });
+      if (tools.length) body.tools = tools;
+
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: PERSONA + '\n\n' + RIGOR }] },
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: buildGenConfig(thinkingLevel)
-        }),
+        body: JSON.stringify(body),
         signal
       });
 
@@ -276,22 +372,24 @@ async function generateViaFetch({ apiKey, attempts, prompt, signal }) {
           if (!data || data === '[DONE]') continue;
           try {
             const j = JSON.parse(data);
-            const parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
+            const cand = j.candidates && j.candidates[0];
+            const parts = cand && cand.content && cand.content.parts;
             if (parts) parts.forEach((p) => { if (p.text) { currentMarkdown += p.text; gotChunks = true; scheduleRender(true); } });
+            if (collectGrounding(cand, grounding)) renderSources();
           } catch (e) {}
         }
       }
 
-      if (gotChunks) return;               // éxito con este modelo
-      errors.push(`${model}: respuesta vacía`);  // sin contenido → siguiente modelo
+      if (gotChunks) { currentGrounding = grounding; renderSources(); return; }   // \u00e9xito con este modelo
+      errors.push(`${model}: respuesta vac\u00eda`);  // sin contenido \u2192 siguiente modelo
     } catch (err) {
-      if (err.name === 'AbortError') throw err;   // el usuario detuvo → no reintentar
-      if (gotChunks) throw err;                    // ya hay salida parcial → no duplicar
-      errors.push(`${model}: ${err.message}`);      // fallo → siguiente modelo (fallback)
+      if (err.name === 'AbortError') throw err;   // el usuario detuvo \u2192 no reintentar
+      if (gotChunks) throw err;                    // ya hay salida parcial \u2192 no duplicar
+      errors.push(`${model}: ${err.message}`);      // fallo \u2192 siguiente modelo (fallback)
     }
   }
 
-  throw new Error('Ningún modelo pudo completar la solicitud. Detalles: ' + errors.join(' | '));
+  throw new Error('Ning\u00fan modelo pudo completar la solicitud. Detalles: ' + errors.join(' | '));
 }
 
 /* ============================================================
@@ -326,6 +424,59 @@ function scheduleRender(withCursor) {
     reportEl.innerHTML = html;
   });
 }
+
+/* ---------- Fuentes y búsquedas en vivo ---------- */
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+function renderSources() {
+  const g = currentGrounding || {};
+  const sources = g.sources || [];
+  const queries = g.queries || [];
+  const urls = g.urls || [];
+  const hasAny = sources.length || queries.length || urls.length;
+
+  if (!hasAny) { sourcesPanel.style.display = 'none'; return; }
+  sourcesPanel.style.display = '';
+
+  sourcesTitle.textContent = sources.length
+    ? `Fuentes y búsquedas en vivo · ${sources.length} fuente(s)`
+    : 'Búsquedas en vivo';
+
+  if (g.searchWidget) {
+    searchWidget.style.display = '';
+    searchWidget.innerHTML = g.searchWidget;
+  }
+
+  let html = '';
+
+  if (queries.length) {
+    html += '<div class="src-group"><div class="src-label">Consultas realizadas en Google</div><div class="src-queries">' +
+      queries.map((q) => `<span class="src-query">${escapeHtml(q)}</span>`).join('') + '</div></div>';
+  }
+
+  if (urls.length) {
+    html += '<div class="src-group"><div class="src-label">Enlaces leídos (contexto de URL)</div><ul class="src-list">' +
+      urls.map((u) => {
+        const ok = /SUCCESS/i.test(u.status || '');
+        return `<li><span class="src-badge ${ok ? 'ok' : 'warn'}">${ok ? 'leído' : escapeHtml(u.status || 'n/d')}</span> ` +
+          `<a href="${escapeAttr(u.url)}" target="_blank" rel="noopener">${escapeHtml(u.url)}</a></li>`;
+      }).join('') + '</ul></div>';
+  }
+
+  if (sources.length) {
+    html += '<div class="src-group"><div class="src-label">Fuentes web citadas</div><ul class="src-list">' +
+      sources.map((s) => `<li><a href="${escapeAttr(s.uri)}" target="_blank" rel="noopener">${escapeHtml(s.title || s.uri)}</a></li>`).join('') +
+      '</ul></div>';
+  }
+
+  sourcesBody.innerHTML = html;
+}
+
 
 /* ============================================================
    UI / FLUJO PRINCIPAL
@@ -372,9 +523,13 @@ async function handleGenerate() {
   const templateKey = templateEl.value;
   const depth = depthEl.value;
   const lang = languageEl.value;
+  const newsUrl = newsUrlEl.value.trim();
   const cfg = getConfig();
+  const hasUrl = extractUrls(newsUrl).length > 0;
 
   currentMarkdown = '';
+  currentGrounding = { sources: [], queries: [], urls: [], searchWidget: null };
+  renderSources();
   emptyState.style.display = 'none';
   reportEl.innerHTML = '';
   btnCopy.disabled = btnDownload.disabled = btnPrint.disabled = btnClear.disabled = true;
@@ -382,7 +537,7 @@ async function handleGenerate() {
   // ---- MODO PLANTILLA ----
   if (!cfg.apiKey) {
     setOutputState('live', 'Generando plantilla…');
-    currentMarkdown = buildTemplateReport(topic, templateKey, depth, lang);
+    currentMarkdown = buildTemplateReport(topic, templateKey, depth, lang, newsUrl);
     scheduleRender(false);
     setOutputState('done', 'Plantilla generada (sin IA)');
     btnCopy.disabled = btnDownload.disabled = btnPrint.disabled = btnClear.disabled = false;
@@ -396,7 +551,7 @@ async function handleGenerate() {
   btnGenerate.textContent = '■ Detener';
   setOutputState('live', 'Gemini está analizando y redactando…');
 
-  const attempts = buildAttempts(cfg.model || DEFAULT_CONFIG.model, cfg.thinkingLevel);
+  const attempts = buildAttempts(cfg.model || DEFAULT_CONFIG.model, cfg.thinkingLevel, cfg.useSearch, hasUrl);
 
   const startTime = Date.now();
   const timer = setInterval(() => {
@@ -405,7 +560,7 @@ async function handleGenerate() {
     setOutputState('live', `${m}analizando… ${s}s · ${currentMarkdown.length} caracteres`);
   }, 500);
 
-  const prompt = buildPrompt(topic, templateKey, depth, lang);
+  const prompt = buildPrompt(topic, templateKey, depth, lang, newsUrl, cfg.useSearch);
 
   try {
     if (BRIDGE) {
@@ -470,7 +625,11 @@ function downloadReport() {
 
 function clearReport() {
   currentMarkdown = '';
+  currentGrounding = { sources: [], queries: [], urls: [], searchWidget: null };
   reportEl.innerHTML = '';
+  searchWidget.innerHTML = '';
+  searchWidget.style.display = 'none';
+  renderSources();
   emptyState.style.display = '';
   setOutputState('idle', 'Esperando consulta');
   btnCopy.disabled = btnDownload.disabled = btnPrint.disabled = btnClear.disabled = true;
@@ -501,6 +660,7 @@ function openSettings() {
   apiKeyEl.value = cfg.apiKey || '';
   modelEl.value = cfg.model || DEFAULT_CONFIG.model;
   thinkingLevelEl.value = cfg.thinkingLevel || DEFAULT_CONFIG.thinkingLevel;
+  useSearchEl.checked = cfg.useSearch !== false;
   settingsModal.classList.add('open');
 }
 
@@ -534,7 +694,8 @@ $('btnSaveSettings').addEventListener('click', () => {
   const cfg = {
     apiKey: apiKeyEl.value.trim(),
     model: modelEl.value,
-    thinkingLevel: thinkingLevelEl.value || DEFAULT_CONFIG.thinkingLevel
+    thinkingLevel: thinkingLevelEl.value || DEFAULT_CONFIG.thinkingLevel,
+    useSearch: useSearchEl.checked
   };
   saveConfig(cfg);
   updateConnBadge();
@@ -561,10 +722,19 @@ async function init() {
       if (requestId === activeReqId) { currentMarkdown += text; scheduleRender(true); }
     });
     if (BRIDGE.onModel) {
-      BRIDGE.onModel(({ requestId, model, attempt, total }) => {
+      BRIDGE.onModel(({ requestId, model, attempt, total, useSearch }) => {
         if (requestId === activeReqId) {
           currentModelUsed = model;
-          setOutputState('live', `Gemini ${model} · intento ${attempt}/${total} · redactando…`);
+          const tag = useSearch ? ' · búsqueda Google' : '';
+          setOutputState('live', `Gemini ${model} · intento ${attempt}/${total}${tag} · redactando…`);
+        }
+      });
+    }
+    if (BRIDGE.onSources) {
+      BRIDGE.onSources(({ requestId, grounding }) => {
+        if (requestId === activeReqId && grounding) {
+          currentGrounding = grounding;
+          renderSources();
         }
       });
     }

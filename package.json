@@ -1,7 +1,7 @@
 {
   "name": "geointel",
   "productName": "GEOINTEL",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Generador de Informes de Inteligencia Geopolítica con IA (Google Gemini). App de escritorio para macOS.",
   "main": "main.js",
   "author": "GEOINTEL",
