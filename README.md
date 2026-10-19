@@ -42,7 +42,7 @@ npm -v
 
 ```bash
 # 1. Clona el repositorio
-git clone https://github.com/TU_USUARIO/geointel.git
+git clone https://github.com/angelsinger1976-arch/geointel.git
 cd geointel
 
 # 2. Instala las dependencias
