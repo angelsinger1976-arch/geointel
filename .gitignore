@@ -1,0 +1,34 @@
+# Dependencias
+node_modules/
+
+# Builds de Electron
+dist/
+out/
+build/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# Entornos
+.env
+.env.local
+
+# Configuración local del usuario (se guarda en userData, no en el repo)
+config.json
+
+# Artefactos del entorno de desarrollo (sandbox)
+.agent_hooks/
+.browser_data/
+.psiphon_data/
+.screenshots/
+outputs/
+generated_images/
+todo.md
+
+# Versión web previa (no forma parte de la app de escritorio)
+/index.html
+/styles.css
+/app.js

@@ -1,0 +1,54 @@
+{
+  "name": "geointel",
+  "productName": "GEOINTEL",
+  "version": "1.0.0",
+  "description": "Generador de Informes de Inteligencia Geopolítica con IA (Google Gemini). App de escritorio para macOS.",
+  "main": "main.js",
+  "author": "GEOINTEL",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac",
+    "dist:dmg": "electron-builder --mac dmg",
+    "pack": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.geointel.desktop",
+    "productName": "GEOINTEL",
+    "copyright": "Copyright © 2025 GEOINTEL",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.news",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icon.png",
+      "identity": null,
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "GEOINTEL ${version}",
+      "contents": [
+        { "x": 140, "y": 200, "type": "file" },
+        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
