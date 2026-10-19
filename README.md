@@ -1,12 +1,12 @@
-# ◈ GEOINTEL
+# ◈ Geo Intel by TheFirm
 
 **Generador de Informes de Inteligencia Geopolítica con IA (Google Gemini)** — aplicación de escritorio para macOS.
 
-Escribes un conflicto, región o acontecimiento mundial y GEOINTEL construye automáticamente un informe estructurado de análisis geopolítico (7, 6 o 5 apartados) usando la API de Google Gemini.
+Escribes un conflicto, región o acontecimiento mundial y Geo Intel by TheFirm construye automáticamente un informe estructurado de análisis geopolítico (7, 6 o 5 apartados) usando la API de Google Gemini.
 
-![GEOINTEL](assets/icon.png)
+![Geo Intel by TheFirm](assets/icon.png)
 
-![Interfaz de GEOINTEL](docs/screenshot.png)
+![Interfaz de Geo Intel by TheFirm](docs/screenshot.png)
 
 ---
 
@@ -16,7 +16,7 @@ Escribes un conflicto, región o acontecimiento mundial y GEOINTEL construye aut
 - **Motor de IA: Google Gemini** (streaming en tiempo real) con los **modelos más recientes** (Gemini 4 Argon, 3.8 Flash, 3.6 Flash, 3.5 Flash-Lite…).
 - **Informes anclados a HOY** 📅: la app inyecta la **fecha actual del sistema** en cada consulta y prohíbe expresamente presentar como «actuales» hechos de años anteriores (2023, 2024, 2025…). Los informes describen la situación tal como está hoy.
 - **Búsqueda en Google en tiempo real** 🌐: activa la herramienta *Grounding with Google Search* para que el informe se base en **noticias y hechos actuales**, con las **fuentes citadas** visibles en el panel «Fuentes y búsquedas en vivo».
-- **Lectura de una noticia por enlace** 🔗: pega el **enlace de una noticia** y GEOINTEL **lee su contenido** (herramienta *URL context*) y además **busca otras noticias relacionadas** en Google para construir el informe.
+- **Lectura de una noticia por enlace** 🔗: pega el **enlace de una noticia** y Geo Intel by TheFirm **lee su contenido** (herramienta *URL context*) y además **busca otras noticias relacionadas** en Google para construir el informe.
 - **Noticias reales con World News API** 📰: antes de redactar, la app **busca noticias actuales** en miles de medios de todo el mundo (World News API), las **ordena por relevancia** respecto a tu tema y las **inyecta en el prompt** para anclar el informe en hechos verificables. Al final del informe se muestra una **galería de noticias** con titular, medio, fecha, sentimiento y enlace, y sus imágenes alimentan la **galería de fotos**.
 - **Conmutación automática (fallback)**: si el modelo elegido falla o no está disponible, la app reintenta sola con el siguiente modelo de la cadena.
 - **Nivel de razonamiento ajustable** (thinking level): auto, bajo, medio o alto.
@@ -68,7 +68,7 @@ Al abrirse la app:
 5. Escribe un conflicto o región. *(Opcional)* Pega el **enlace de una noticia** en el campo «Enlace de una noticia».
 6. Pulsa **▶ Generar informe**.
 
-> 🔁 **Fallback automático:** si el modelo principal falla (no disponible, saturado o error), GEOINTEL reintenta automáticamente con los siguientes modelos de la cadena, sin que tengas que hacer nada. La barra de estado muestra el modelo que está usando en cada momento.
+> 🔁 **Fallback automático:** si el modelo principal falla (no disponible, saturado o error), Geo Intel by TheFirm reintenta automáticamente con los siguientes modelos de la cadena, sin que tengas que hacer nada. La barra de estado muestra el modelo que está usando en cada momento.
 
 > 💡 Si no introduces ninguna API key, la app funciona igualmente en **modo plantilla**: genera el esqueleto completo del informe con tu tema insertado.
 
@@ -76,11 +76,11 @@ Al abrirse la app:
 
 ## 📅🌐 Informes actuales: fecha de hoy + búsqueda en vivo
 
-GEOINTEL está diseñado para que **nunca** te devuelva un informe «congelado» en el pasado:
+Geo Intel by TheFirm está diseñado para que **nunca** te devuelva un informe «congelado» en el pasado:
 
 - **Fecha dinámica:** cada vez que generas un informe, la app calcula la **fecha actual del sistema** y la inyecta tanto en el *system prompt* como en la consulta. El informe se titula con la fecha real (p. ej. *«Fecha del informe: lunes, 19 de octubre de 2026»*) y el modelo tiene **prohibido** presentar como vigentes hechos de años anteriores.
 - **Grounding con Google Search:** con la casilla **«Buscar en Google en tiempo real»** activada, Gemini consulta Google antes de redactar. El informe se apoya en **noticias y hechos del momento** y la app muestra un panel con las **consultas realizadas**, los **enlaces leídos** y las **fuentes web citadas**.
-- **Enlace de noticia (URL context):** si pegas el enlace de una noticia, GEOINTEL **lee su contenido** y, además, **busca en Google otras noticias y hechos recientes** relacionados, los contrasta con la noticia de partida y construye el informe con todo ello.
+- **Enlace de noticia (URL context):** si pegas el enlace de una noticia, Geo Intel by TheFirm **lee su contenido** y, además, **busca en Google otras noticias y hechos recientes** relacionados, los contrasta con la noticia de partida y construye el informe con todo ello.
 
 ### 🔗 Cómo usar el enlace de una noticia
 
@@ -97,7 +97,7 @@ La app pedirá al modelo que, en este orden: **1)** lea el contenido del enlace,
 
 ## 📰 Noticias reales con World News API
 
-Además del *grounding* de Google, GEOINTEL puede buscar **noticias reales y recientes** en la **[World News API](https://worldnewsapi.com/)**, que agrega miles de medios internacionales. Es la forma más directa de que el informe se apoye en **titulares verificables con enlace a la fuente**.
+Además del *grounding* de Google, Geo Intel by TheFirm puede buscar **noticias reales y recientes** en la **[World News API](https://worldnewsapi.com/)**, que agrega miles de medios internacionales. Es la forma más directa de que el informe se apoye en **titulares verificables con enlace a la fuente**.
 
 ### Cómo activarlo
 
@@ -122,7 +122,7 @@ Además del *grounding* de Google, GEOINTEL puede buscar **noticias reales y rec
 - Límite de **60 peticiones/minuto** y **1 petición concurrente** en el plan gratuito.
 - Si la clave falta, es incorrecta o se agota la cuota, la app **avisa con un mensaje** y **continúa** con la generación normal (la búsqueda de noticias es opcional y nunca bloquea el informe).
 
-> ⚠️ La búsqueda de noticias es **complementaria**: si la desactivas o falla, GEOINTEL sigue funcionando con el *grounding* de Google y el modelo Gemini.
+> ⚠️ La búsqueda de noticias es **complementaria**: si la desactivas o falla, Geo Intel by TheFirm sigue funcionando con el *grounding* de Google y el modelo Gemini.
 
 ---
 
@@ -136,8 +136,8 @@ npm run dist
 
 Esto crea en la carpeta `dist/`:
 
-- `GEOINTEL-1.2.0.dmg` → instalador arrastrable a *Aplicaciones*.
-- `GEOINTEL-1.2.0-mac.zip` → versión comprimida de la app.
+- `Geo Intel by TheFirm-1.2.0.dmg` → instalador arrastrable a *Aplicaciones*.
+- `Geo Intel by TheFirm-1.2.0-mac.zip` → versión comprimida de la app.
 
 También puedes usar:
 
@@ -150,14 +150,14 @@ npm run dist:dmg    # genera solo el .dmg
 
 La app **no está firmada** con un certificado de Apple, así que macOS mostrará un aviso la primera vez. Para abrirla:
 
-1. Abre el `.dmg` y arrastra **GEOINTEL** a la carpeta **Aplicaciones**.
-2. En *Aplicaciones*, haz **clic derecho → Abrir** sobre GEOINTEL y confirma **Abrir**.
+1. Abre el `.dmg` y arrastra **Geo Intel by TheFirm** a la carpeta **Aplicaciones**.
+2. En *Aplicaciones*, haz **clic derecho → Abrir** sobre Geo Intel by TheFirm y confirma **Abrir**.
    - (Solo hace falta la primera vez.)
 
 Si macOS sigue bloqueándola, ejecuta en Terminal:
 
 ```bash
-xattr -cr /Applications/GEOINTEL.app
+xattr -cr /Applications/Geo Intel by TheFirm.app
 ```
 
 ---
@@ -223,7 +223,7 @@ La app usa los modelos vigentes de la familia Gemini 3.x / 4.x:
 
 **Cadena de fallback:** `gemini-4-argon → gemini-3.8-flash → gemini-3.6-flash → gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemini-3.1-pro-preview → gemini-3-flash-preview`.
 
-> ℹ️ Los modelos Gemini 2.0 y 1.5 están **apagados**, y los 2.5 tienen **acceso limitado**; por eso GEOINTEL ya no los usa. Además, los parámetros `temperature`, `top_p` y `top_k` están **deprecados** en los modelos nuevos (provocan error 400), así que la app no los envía: el control de creatividad se sustituye por el **nivel de razonamiento** (`thinkingLevel`).
+> ℹ️ Los modelos Gemini 2.0 y 1.5 están **apagados**, y los 2.5 tienen **acceso limitado**; por eso Geo Intel by TheFirm ya no los usa. Además, los parámetros `temperature`, `top_p` y `top_k` están **deprecados** en los modelos nuevos (provocan error 400), así que la app no los envía: el control de creatividad se sustituye por el **nivel de razonamiento** (`thinkingLevel`).
 
 ---
 
@@ -243,4 +243,4 @@ Distribuido bajo licencia **MIT**. Consulta [LICENSE](LICENSE).
 
 ## ⚖️ Aviso
 
-GEOINTEL es una herramienta de apoyo analítico. Los informes generados por IA pueden contener imprecisiones; verifica siempre los datos con fuentes primarias antes de tomar decisiones.
+Geo Intel by TheFirm es una herramienta de apoyo analítico. Los informes generados por IA pueden contener imprecisiones; verifica siempre los datos con fuentes primarias antes de tomar decisiones.

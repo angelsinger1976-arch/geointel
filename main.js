@@ -1,13 +1,17 @@
 'use strict';
 
 /* ============================================================
-   GEOINTEL — Proceso principal de Electron
+   Geo Intel by TheFirm — Proceso principal de Electron
    ============================================================ */
 
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const GeoNews = require('./renderer/news-util.js');
+
+/* ---------- Identidad de la aplicación ---------- */
+const APP_NAME = 'Geo Intel by TheFirm';
+app.setName(APP_NAME);
 
 /* ---------- Fecha actual (para anclar los informes a HOY) ---------- */
 const DIAS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -71,7 +75,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 620,
     backgroundColor: '#060a12',
-    title: 'GEOINTEL',
+    title: APP_NAME,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: isMac ? { x: 18, y: 22 } : undefined,
     webPreferences: {
@@ -333,7 +337,7 @@ ipcMain.handle('gemini:generate', async (event, payload) => {
    IPC — Geolocalización (Nominatim / OpenStreetMap)
    Convierte un nombre de lugar en coordenadas para el mapa.
    ============================================================ */
-const NOMINATIM_UA = 'GEOINTEL/1.2 (app de escritorio; generador de informes geopolíticos)';
+const NOMINATIM_UA = 'GeoIntelByTheFirm/1.2 (app de escritorio; generador de informes geopolíticos)';
 
 ipcMain.handle('geo:geocode', async (_e, payload) => {
   const q = String((payload && payload.query) || '').trim();
@@ -364,7 +368,7 @@ ipcMain.handle('geo:geocode', async (_e, payload) => {
    ============================================================ */
 const MAX_IMAGES = 6;
 const MAX_IMG_BYTES = 2.5 * 1024 * 1024;
-const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) GEOINTEL/1.2 Safari/537.36';
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) GeoIntelByTheFirm/1.2 Safari/537.36';
 
 function hostOf(u) {
   try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return u; }

@@ -1,10 +1,10 @@
 {
-  "name": "geointel",
-  "productName": "GEOINTEL",
+  "name": "geo-intel-by-thefirm",
+  "productName": "Geo Intel by TheFirm",
   "version": "1.2.0",
-  "description": "Generador de Informes de Inteligencia Geopolítica con IA (Google Gemini). App de escritorio para macOS.",
+  "description": "Geo Intel by TheFirm — Generador de Informes de Inteligencia Geopolítica con IA (Google Gemini + World News API). App de escritorio para macOS.",
   "main": "main.js",
-  "author": "GEOINTEL",
+  "author": "TheFirm",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -13,9 +13,9 @@
     "pack": "electron-builder --dir"
   },
   "build": {
-    "appId": "com.geointel.desktop",
-    "productName": "GEOINTEL",
-    "copyright": "Copyright © 2026 GEOINTEL",
+    "appId": "com.thefirm.geointel",
+    "productName": "Geo Intel by TheFirm",
+    "copyright": "Copyright © 2026 TheFirm",
     "directories": {
       "output": "dist"
     },
@@ -32,12 +32,12 @@
         "dmg",
         "zip"
       ],
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.icns",
       "identity": null,
       "darkModeSupport": true
     },
     "dmg": {
-      "title": "GEOINTEL ${version}",
+      "title": "Geo Intel by TheFirm ${version}",
       "contents": [
         { "x": 140, "y": 200, "type": "file" },
         { "x": 400, "y": 200, "type": "link", "path": "/Applications" }

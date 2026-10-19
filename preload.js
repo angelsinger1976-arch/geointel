@@ -1,7 +1,7 @@
 'use strict';
 
 /* ============================================================
-   GEOINTEL — Puente seguro (contextBridge)
+   Geo Intel by TheFirm — Puente seguro (contextBridge)
    Expone una API mínima al renderer sin habilitar Node.
    ============================================================ */
 

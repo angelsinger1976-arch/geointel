@@ -1,5 +1,5 @@
 /* ============================================================
-   GEOINTEL — Lógica del renderer (Gemini)
+   Geo Intel by TheFirm — Lógica del renderer (Gemini)
    Funciona dentro de Electron (IPC) y en navegador (fetch directo).
    ============================================================ */
 
@@ -1037,7 +1037,7 @@ function downloadReport() {
   const blob = new Blob([buildFullMarkdown()], { type: 'text/markdown;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `GEOINTEL_${topic}_${date}.md`;
+  a.download = `GeoIntelByTheFirm_${topic}_${date}.md`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
