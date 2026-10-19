@@ -26,6 +26,7 @@ config.json
 .screenshots/
 outputs/
 generated_images/
+summarized_conversations/
 todo.md
 
 # Versión web previa (no forma parte de la app de escritorio)

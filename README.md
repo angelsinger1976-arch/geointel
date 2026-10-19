@@ -13,7 +13,9 @@ Escribes un conflicto, región o acontecimiento mundial y GEOINTEL construye aut
 ## ✨ Características
 
 - **Interfaz de escritorio nativa** para macOS (Electron), instalable como `.app` / `.dmg`.
-- **Motor de IA: Google Gemini** (streaming en tiempo real).
+- **Motor de IA: Google Gemini** (streaming en tiempo real) con los **modelos más recientes** (Gemini 4 Argon, 3.8 Flash, 3.6 Flash, 3.5 Flash-Lite…).
+- **Conmutación automática (fallback)**: si el modelo elegido falla o no está disponible, la app reintenta sola con el siguiente modelo de la cadena.
+- **Nivel de razonamiento ajustable** (thinking level): auto, bajo, medio o alto.
 - **3 plantillas de informe**: completa (7 apartados), ampliada (6) y ejecutiva (5).
 - **Profundidad ajustable**: dossier extenso (2.500–4.000 palabras) o informe ejecutivo (900–1.400).
 - **4 idiomas de salida**: español, inglés, portugués y francés.
@@ -55,9 +57,11 @@ npm start
 Al abrirse la app:
 
 1. Pulsa **⚙ Configuración**.
-2. Pega tu **API Key de Gemini** y elige un modelo (por defecto `gemini-2.5-flash`).
+2. Pega tu **API Key de Gemini**, elige un **modelo principal** (por defecto `gemini-3.8-flash`) y, si quieres, un **nivel de razonamiento**.
 3. Pulsa **Guardar**.
 4. Escribe un conflicto o región y pulsa **▶ Generar informe**.
+
+> 🔁 **Fallback automático:** si el modelo principal falla (no disponible, saturado o error), GEOINTEL reintenta automáticamente con los siguientes modelos de la cadena, sin que tengas que hacer nada. La barra de estado muestra el modelo que está usando en cada momento.
 
 > 💡 Si no introduces ninguna API key, la app funciona igualmente en **modo plantilla**: genera el esqueleto completo del informe con tu tema insertado.
 
@@ -73,8 +77,8 @@ npm run dist
 
 Esto crea en la carpeta `dist/`:
 
-- `GEOINTEL-1.0.0.dmg` → instalador arrastrable a *Aplicaciones*.
-- `GEOINTEL-1.0.0-mac.zip` → versión comprimida de la app.
+- `GEOINTEL-1.1.0.dmg` → instalador arrastrable a *Aplicaciones*.
+- `GEOINTEL-1.1.0-mac.zip` → versión comprimida de la app.
 
 También puedes usar:
 
@@ -135,7 +139,28 @@ geointel/
 1. Escribes el tema y eliges plantilla, profundidad e idioma.
 2. La app construye un **prompt maestro** (persona de analista senior + condiciones de rigor + apartados).
 3. El proceso principal de Electron envía el prompt a la API de **Gemini** (`streamGenerateContent`) y transmite la respuesta en streaming.
-4. El texto se renderiza en Markdown y puede exportarse a PDF o Markdown.
+4. Si el modelo principal devuelve un error antes de emitir texto, la app **reintenta con el siguiente modelo de la cadena** (fallback).
+5. El texto se renderiza en Markdown y puede exportarse a PDF o Markdown.
+
+---
+
+## 🤖 Modelos soportados (2026)
+
+La app usa los modelos vigentes de la familia Gemini 3.x / 4.x:
+
+| Modelo | Endpoint | Notas |
+| --- | --- | --- |
+| Gemini 4 Argon | `gemini-4-argon` | Máxima capacidad de razonamiento (1M de contexto). |
+| Gemini 3.8 Flash | `gemini-3.8-flash` | **Recomendado.** El Flash más inteligente. |
+| Gemini 3.6 Flash | `gemini-3.6-flash` | Flash de generación anterior, estable. |
+| Gemini 3.5 Flash-Lite | `gemini-3.5-flash-lite` | El más rápido y económico. |
+| Gemini 3.1 Flash-Lite | `gemini-3.1-flash-lite` | Rendimiento alto a bajo coste. |
+| Gemini 3.1 Pro | `gemini-3.1-pro-preview` | Preview de la serie Pro. |
+| Gemini 3 Flash | `gemini-3-flash-preview` | Preview. |
+
+**Cadena de fallback:** `gemini-4-argon → gemini-3.8-flash → gemini-3.6-flash → gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemini-3.1-pro-preview → gemini-3-flash-preview`.
+
+> ℹ️ Los modelos Gemini 2.0 y 1.5 están **apagados**, y los 2.5 tienen **acceso limitado**; por eso GEOINTEL ya no los usa. Además, los parámetros `temperature`, `top_p` y `top_k` están **deprecados** en los modelos nuevos (provocan error 400), así que la app no los envía: el control de creatividad se sustituye por el **nivel de razonamiento** (`thinkingLevel`).
 
 ---
 

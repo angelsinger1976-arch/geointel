@@ -28,16 +28,53 @@ const toastEl      = $('toast');
 const settingsModal = $('settingsModal');
 const apiKeyEl      = $('apiKey');
 const modelEl       = $('model');
-const temperatureEl = $('temperature');
+const thinkingLevelEl = $('thinkingLevel');
 
 /* ---------- Estado ---------- */
 const BRIDGE = window.geointel || null;   // Puente Electron (si existe)
 let currentMarkdown = '';
 let isGenerating = false;
 let activeReqId = null;
+let currentModelUsed = '';
 
 const LANG_NAMES = { es: 'español', en: 'inglés', pt: 'portugués', fr: 'francés' };
-const DEFAULT_CONFIG = { apiKey: '', model: 'gemini-2.5-flash', temperature: '0.4' };
+const DEFAULT_CONFIG = { apiKey: '', model: 'gemini-3.8-flash', thinkingLevel: 'auto' };
+
+/* Cadena de modelos para el fallback automático (de más a menos capacidad).
+   El modelo elegido por el usuario se intenta SIEMPRE primero. */
+const MODEL_CHAIN = [
+  'gemini-4-argon',
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview'
+];
+
+/* Construye la lista ordenada de intentos: el modelo principal primero,
+   después el resto de la cadena. Si hay un nivel de razonamiento fijado,
+   se añade un intento extra sin él (por si el modelo no lo soporta). */
+function buildAttempts(primaryModel, thinkingLevel) {
+  const chain = [primaryModel, ...MODEL_CHAIN.filter((m) => m !== primaryModel)];
+  const attempts = [];
+  const useThinking = thinkingLevel && thinkingLevel !== 'auto';
+  for (const model of chain) {
+    if (useThinking) attempts.push({ model, thinkingLevel });
+    attempts.push({ model, thinkingLevel: null });
+  }
+  return attempts;
+}
+
+/* Configuración de generación compatible con los modelos Gemini 3.x/4.x.
+   NO se envían temperature/top_p/top_k (deprecados → HTTP 400). */
+function buildGenConfig(thinkingLevel) {
+  const cfg = { maxOutputTokens: 32768 };
+  if (thinkingLevel && String(thinkingLevel).toLowerCase() !== 'auto') {
+    cfg.thinkingConfig = { thinkingLevel: String(thinkingLevel).toUpperCase() };
+  }
+  return cfg;
+}
 
 /* ============================================================
    PLANTILLAS DE PROMPT
@@ -176,66 +213,85 @@ function buildTemplateReport(topic, templateKey, depth, lang) {
 }
 
 /* ============================================================
-   MOTOR DE GENERACIÓN — Gemini
+   MOTOR DE GENERACIÓN — Gemini (con fallback en cadena)
    ============================================================ */
 
-// Vía IPC (Electron)
-async function generateViaBridge({ apiKey, model, prompt, temperature }) {
+// Vía IPC (Electron). El proceso principal gestiona el fallback.
+async function generateViaBridge({ apiKey, attempts, prompt }) {
   const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   activeReqId = requestId;
 
-  const res = await BRIDGE.generate({ requestId, apiKey, model, prompt, temperature });
+  const res = await BRIDGE.generate({ requestId, apiKey, attempts, prompt });
   if (res && res.ok === false) throw new Error(res.error || 'Error desconocido de Gemini');
+  if (res && res.model) currentModelUsed = res.model;
   return res;
 }
 
 // Vía fetch directo (navegador). Gemini permite CORS.
-async function generateViaFetch({ apiKey, model, prompt, temperature, signal }) {
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/` +
-    `${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+async function generateViaFetch({ apiKey, attempts, prompt, signal }) {
+  const errors = [];
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: PERSONA + ' ' + RIGOR }] },
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.4,
-        maxOutputTokens: 8192
+  for (let i = 0; i < attempts.length; i++) {
+    const { model, thinkingLevel } = attempts[i];
+    let gotChunks = false;
+
+    try {
+      currentModelUsed = model;
+      setOutputState('live', `Gemini ${model} · intento ${i + 1}/${attempts.length}…`);
+
+      const url =
+        `https://generativelanguage.googleapis.com/v1beta/models/` +
+        `${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: PERSONA + '\n\n' + RIGOR }] },
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: buildGenConfig(thinkingLevel)
+        }),
+        signal
+      });
+
+      if (!res.ok) {
+        let t = '';
+        try { t = await res.text(); } catch (e) {}
+        throw new Error(`Gemini HTTP ${res.status}: ${t.slice(0, 300)}`);
       }
-    }),
-    signal
-  });
 
-  if (!res.ok) {
-    let t = '';
-    try { t = await res.text(); } catch (e) {}
-    throw new Error(`Gemini HTTP ${res.status}: ${t.slice(0, 300)}`);
-  }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          let line = buffer.slice(0, idx).replace(/\r$/, '');
+          buffer = buffer.slice(idx + 1);
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          try {
+            const j = JSON.parse(data);
+            const parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
+            if (parts) parts.forEach((p) => { if (p.text) { currentMarkdown += p.text; gotChunks = true; scheduleRender(true); } });
+          } catch (e) {}
+        }
+      }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      let line = buffer.slice(0, idx).replace(/\r$/, '');
-      buffer = buffer.slice(idx + 1);
-      if (!line.startsWith('data:')) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
-      try {
-        const j = JSON.parse(data);
-        const parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
-        if (parts) parts.forEach((p) => { if (p.text) { currentMarkdown += p.text; scheduleRender(true); } });
-      } catch (e) {}
+      if (gotChunks) return;               // éxito con este modelo
+      errors.push(`${model}: respuesta vacía`);  // sin contenido → siguiente modelo
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;   // el usuario detuvo → no reintentar
+      if (gotChunks) throw err;                    // ya hay salida parcial → no duplicar
+      errors.push(`${model}: ${err.message}`);      // fallo → siguiente modelo (fallback)
     }
   }
+
+  throw new Error('Ningún modelo pudo completar la solicitud. Detalles: ' + errors.join(' | '));
 }
 
 /* ============================================================
@@ -291,7 +347,7 @@ function updateConnBadge() {
   if (cfg.apiKey) {
     connStatus.className = 'conn on';
     connText.textContent = 'Gemini · ' + (cfg.model || 'modelo');
-    genHint.textContent = 'Listo. Se generará con Gemini (' + (cfg.model || '') + ').';
+    genHint.textContent = 'Listo. Motor: Gemini (' + (cfg.model || '') + ') con fallback automático.';
   } else {
     connStatus.className = 'conn off';
     connText.textContent = 'Modo plantilla';
@@ -336,34 +392,35 @@ async function handleGenerate() {
 
   // ---- MODO IA (Gemini) ----
   isGenerating = true;
+  currentModelUsed = cfg.model || DEFAULT_CONFIG.model;
   btnGenerate.textContent = '■ Detener';
   setOutputState('live', 'Gemini está analizando y redactando…');
+
+  const attempts = buildAttempts(cfg.model || DEFAULT_CONFIG.model, cfg.thinkingLevel);
 
   const startTime = Date.now();
   const timer = setInterval(() => {
     const s = Math.floor((Date.now() - startTime) / 1000);
-    setOutputState('live', `Analizando… ${s}s · ${currentMarkdown.length} caracteres`);
+    const m = currentModelUsed ? `Gemini ${currentModelUsed} · ` : '';
+    setOutputState('live', `${m}analizando… ${s}s · ${currentMarkdown.length} caracteres`);
   }, 500);
 
   const prompt = buildPrompt(topic, templateKey, depth, lang);
 
   try {
     if (BRIDGE) {
-      await generateViaBridge({
-        apiKey: cfg.apiKey, model: cfg.model, prompt, temperature: parseFloat(cfg.temperature)
-      });
+      await generateViaBridge({ apiKey: cfg.apiKey, attempts, prompt });
     } else {
       window._fetchAbort = new AbortController();
       await generateViaFetch({
-        apiKey: cfg.apiKey, model: cfg.model, prompt,
-        temperature: parseFloat(cfg.temperature), signal: window._fetchAbort.signal
+        apiKey: cfg.apiKey, attempts, prompt, signal: window._fetchAbort.signal
       });
     }
     clearInterval(timer);
     scheduleRender(false);
     if (!currentMarkdown.trim()) throw new Error('El modelo no devolvió contenido. Revisa el modelo o la key.');
-    setOutputState('done', 'Informe completado');
-    showToast('Informe generado correctamente.', 'ok');
+    setOutputState('done', 'Informe completado · ' + currentModelUsed);
+    showToast('Informe generado con ' + currentModelUsed + '.', 'ok');
   } catch (err) {
     clearInterval(timer);
     if (err.name === 'AbortError') {
@@ -443,7 +500,7 @@ function openSettings() {
   const cfg = getConfig();
   apiKeyEl.value = cfg.apiKey || '';
   modelEl.value = cfg.model || DEFAULT_CONFIG.model;
-  temperatureEl.value = cfg.temperature || DEFAULT_CONFIG.temperature;
+  thinkingLevelEl.value = cfg.thinkingLevel || DEFAULT_CONFIG.thinkingLevel;
   settingsModal.classList.add('open');
 }
 
@@ -477,12 +534,12 @@ $('btnSaveSettings').addEventListener('click', () => {
   const cfg = {
     apiKey: apiKeyEl.value.trim(),
     model: modelEl.value,
-    temperature: temperatureEl.value.trim() || DEFAULT_CONFIG.temperature
+    thinkingLevel: thinkingLevelEl.value || DEFAULT_CONFIG.thinkingLevel
   };
   saveConfig(cfg);
   updateConnBadge();
   closeSettings();
-  showToast(cfg.apiKey ? 'Configuración guardada. Motor: Gemini (' + cfg.model + ')' : 'Modo plantilla activado (sin API key).', 'ok');
+  showToast(cfg.apiKey ? 'Configuración guardada. Motor: Gemini (' + cfg.model + ') con fallback.' : 'Modo plantilla activado (sin API key).', 'ok');
 });
 
 topicEl.addEventListener('keydown', (e) => {
@@ -503,6 +560,14 @@ async function init() {
     BRIDGE.onChunk(({ requestId, text }) => {
       if (requestId === activeReqId) { currentMarkdown += text; scheduleRender(true); }
     });
+    if (BRIDGE.onModel) {
+      BRIDGE.onModel(({ requestId, model, attempt, total }) => {
+        if (requestId === activeReqId) {
+          currentModelUsed = model;
+          setOutputState('live', `Gemini ${model} · intento ${attempt}/${total} · redactando…`);
+        }
+      });
+    }
     try {
       const stored = await BRIDGE.getConfig();
       window._cfg = Object.assign({}, DEFAULT_CONFIG, stored || {});

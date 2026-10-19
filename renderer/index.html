@@ -120,23 +120,30 @@
 
       <div class="row2">
         <div class="field">
-          <label for="model">Modelo</label>
+          <label for="model">Modelo principal</label>
           <select id="model">
-            <option value="gemini-2.5-flash" selected>gemini-2.5-flash (recomendado)</option>
-            <option value="gemini-2.5-pro">gemini-2.5-pro (máxima calidad)</option>
-            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-            <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite (rápido)</option>
-            <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-            <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+            <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (recomendado)</option>
+            <option value="gemini-4-argon">Gemini 4 Argon (máxima capacidad)</option>
+            <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+            <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (rápido/económico)</option>
+            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+            <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (preview)</option>
+            <option value="gemini-3-flash-preview">Gemini 3 Flash (preview)</option>
           </select>
         </div>
         <div class="field">
-          <label for="temperature">Temperatura (0–1)</label>
-          <input type="text" id="temperature" placeholder="0.4" />
+          <label for="thinkingLevel">Nivel de razonamiento</label>
+          <select id="thinkingLevel">
+            <option value="auto" selected>Auto (recomendado)</option>
+            <option value="low">Bajo (más rápido)</option>
+            <option value="medium">Medio</option>
+            <option value="high">Alto (máxima profundidad)</option>
+          </select>
         </div>
       </div>
 
       <div class="note">
+        🔁 <strong>Conmutación automática (fallback):</strong> si el modelo principal falla o no está disponible, GEOINTEL reintenta automáticamente con los siguientes modelos de la cadena (Gemini 4 Argon → 3.8 Flash → 3.6 Flash → 3.5 Flash-Lite → 3.1 Flash-Lite → 3.1 Pro → 3 Flash).<br>
         💡 <strong>Sin API key</strong> la app funciona en <em>modo plantilla</em>: genera el esqueleto completo del informe con tu tema insertado, listo para completar.<br>
         🔗 Consigue tu clave gratuita en
         <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
