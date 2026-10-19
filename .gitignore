@@ -24,6 +24,7 @@ config.json
 .browser_data/
 .psiphon_data/
 .screenshots/
+screenshots/
 outputs/
 generated_images/
 summarized_conversations/

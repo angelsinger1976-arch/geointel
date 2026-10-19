@@ -19,6 +19,15 @@ contextBridge.exposeInMainWorld('geointel', {
   generate: (payload) => ipcRenderer.invoke('gemini:generate', payload),
   abort: (requestId) => ipcRenderer.invoke('gemini:abort', { requestId }),
 
+  // Geolocalización (para el mapa del informe)
+  geocode: (query) => ipcRenderer.invoke('geo:geocode', { query }),
+
+  // Fotos: extrae y descarga las imágenes de las fuentes
+  fetchImages: (urls) => ipcRenderer.invoke('media:images', { urls }),
+
+  // Noticias reales y recientes (World News API)
+  searchNews: (payload) => ipcRenderer.invoke('news:search', payload),
+
   // Suscripciones a eventos de streaming
   onChunk: (cb) => ipcRenderer.on('gemini:chunk', (_e, d) => cb(d)),
   onModel: (cb) => ipcRenderer.on('gemini:model', (_e, d) => cb(d)),

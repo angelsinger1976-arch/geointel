@@ -7,6 +7,7 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const GeoNews = require('./renderer/news-util.js');
 
 /* ---------- Fecha actual (para anclar los informes a HOY) ---------- */
 const DIAS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -325,5 +326,159 @@ ipcMain.handle('gemini:generate', async (event, payload) => {
     return { ok: false, error: err.message };
   } finally {
     activeRequests.delete(requestId);
+  }
+});
+
+/* ============================================================
+   IPC — Geolocalización (Nominatim / OpenStreetMap)
+   Convierte un nombre de lugar en coordenadas para el mapa.
+   ============================================================ */
+const NOMINATIM_UA = 'GEOINTEL/1.2 (app de escritorio; generador de informes geopolíticos)';
+
+ipcMain.handle('geo:geocode', async (_e, payload) => {
+  const q = String((payload && payload.query) || '').trim();
+  if (!q) return { ok: false, error: 'consulta vacía' };
+  try {
+    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=es&q=' +
+      encodeURIComponent(q.slice(0, 240));
+    const res = await fetch(url, {
+      headers: { 'User-Agent': NOMINATIM_UA, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(9000)
+    });
+    if (!res.ok) return { ok: false, error: 'HTTP ' + res.status };
+    const arr = await res.json();
+    if (!Array.isArray(arr) || !arr.length) return { ok: false, error: 'sin resultados' };
+    const r = arr[0];
+    const lat = parseFloat(r.lat);
+    const lng = parseFloat(r.lon);
+    if (!isFinite(lat) || !isFinite(lng)) return { ok: false, error: 'coordenadas inválidas' };
+    return { ok: true, lat, lng, name: r.display_name || q };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+/* ============================================================
+   IPC — Fotos: extrae og:image de las fuentes y las descarga
+   como data URL (evita bloqueos de hotlink y problemas de CORS).
+   ============================================================ */
+const MAX_IMAGES = 6;
+const MAX_IMG_BYTES = 2.5 * 1024 * 1024;
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) GEOINTEL/1.2 Safari/537.36';
+
+function hostOf(u) {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return u; }
+}
+
+function extractMetaImage(html, baseUrl) {
+  const patterns = [
+    /<meta[^>]+property=["']og:image:secure_url["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+    /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["']/i
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) {
+      try { return new URL(m[1], baseUrl).href; } catch (e) { return m[1]; }
+    }
+  }
+  return null;
+}
+
+async function fetchOgImage(pageUrl) {
+  const res = await fetch(pageUrl, {
+    headers: { 'User-Agent': BROWSER_UA, 'Accept': 'text/html,application/xhtml+xml' },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(11000)
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const ct = res.headers.get('content-type') || '';
+  if (!/html/i.test(ct)) throw new Error('no-html');
+  const html = (await res.text()).slice(0, 500000);
+  const img = extractMetaImage(html, pageUrl);
+  if (!img) throw new Error('sin imagen');
+  return img;
+}
+
+async function downloadAsDataUrl(imgUrl) {
+  const res = await fetch(imgUrl, {
+    headers: { 'User-Agent': BROWSER_UA, 'Accept': 'image/*' },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(13000)
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const ct = (res.headers.get('content-type') || '').split(';')[0].trim();
+  if (!/^image\//i.test(ct)) throw new Error('no-image');
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_IMG_BYTES) throw new Error('demasiado grande');
+  return `data:${ct};base64,${buf.toString('base64')}`;
+}
+
+ipcMain.handle('media:images', async (_e, payload) => {
+  const raw = payload && Array.isArray(payload.urls) ? payload.urls : [];
+  const list = raw.filter((u) => /^https?:\/\//i.test(u)).slice(0, 8);
+  const images = [];
+  for (const page of list) {
+    if (images.length >= MAX_IMAGES) break;
+    try {
+      const imgUrl = await fetchOgImage(page);
+      const dataUrl = await downloadAsDataUrl(imgUrl);
+      images.push({ page, image: dataUrl, title: hostOf(page) });
+    } catch (e) { /* se ignora la fuente sin imagen */ }
+  }
+  return { ok: true, images };
+});
+
+/* ============================================================
+   IPC — Noticias (World News API)
+   Busca noticias reales y recientes sobre el tema del informe.
+   Docs: https://worldnewsapi.com/docs/search-news/
+   Autenticación por cabecera `x-api-key`.
+   ============================================================ */
+const WORLD_NEWS_ENDPOINT = 'https://api.worldnewsapi.com/search-news';
+
+ipcMain.handle('news:search', async (_e, payload) => {
+  const p = payload || {};
+  const apiKey = String(p.apiKey || '').trim();
+  if (!apiKey) return { ok: false, error: 'Falta la API key de World News API.' };
+
+  const query = String(p.query || '').trim().slice(0, 200);
+  const language = String(p.language || '').trim().slice(0, 8);
+  const sourceCountries = String(p.sourceCountries || '').trim().slice(0, 60);
+  const number = Math.min(Math.max(parseInt(p.number, 10) || 40, 1), 100);
+
+  const params = new URLSearchParams();
+  if (query) params.set('text', query);
+  if (language) params.set('language', language);
+  if (sourceCountries) params.set('source-countries', sourceCountries);
+  params.set('number', String(number));
+  params.set('sort', 'publish-time');
+  params.set('sort-direction', 'DESC');
+
+  try {
+    const res = await fetch(`${WORLD_NEWS_ENDPOINT}?${params.toString()}`, {
+      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(16000)
+    });
+    if (!res.ok) {
+      let t = '';
+      try { t = await res.text(); } catch (e) {}
+      const hint = res.status === 402 ? ' (cuota diaria agotada)'
+        : (res.status === 401 || res.status === 403) ? ' (API key no válida)' : '';
+      return { ok: false, status: res.status, error: `World News API HTTP ${res.status}${hint}: ${t.slice(0, 200)}` };
+    }
+    const data = await res.json();
+    const raw = Array.isArray(data.news) ? data.news : [];
+    const news = raw.map(GeoNews.normalizeItem).filter(Boolean);
+    return {
+      ok: true,
+      available: typeof data.available === 'number' ? data.available : raw.length,
+      count: news.length,
+      news
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
   }
 });

@@ -37,16 +37,37 @@ const modelEl       = $('model');
 const thinkingLevelEl = $('thinkingLevel');
 const useSearchEl   = $('useSearch');
 
+const worldNewsKeyEl = $('worldNewsKey');
+const useNewsEl      = $('useNews');
+const newsCountEl    = $('newsCount');
+const newsLangEl     = $('newsLang');
+
 /* ---------- Estado ---------- */
 const BRIDGE = window.geointel || null;   // Puente Electron (si existe)
+const GeoNews = window.GeoNews || {};     // Utilidades de noticias (news-util.js)
 let currentMarkdown = '';
 let isGenerating = false;
 let activeReqId = null;
 let currentModelUsed = '';
 let currentGrounding = { sources: [], queries: [], urls: [] };
+let currentMeta = null;        // metadatos geográficos del informe (bloque geointel-meta)
+let currentLocation = null;    // { name, lat, lng, points[] } para el mapa
+let currentImages = [];        // fotos extraídas de las fuentes
+let currentNews = [];          // noticias reales (World News API)
+let currentNewsQuery = '';     // consulta usada en la búsqueda de noticias
+let mapInstance = null;        // instancia de Leaflet
 
 const LANG_NAMES = { es: 'español', en: 'inglés', pt: 'portugués', fr: 'francés' };
-const DEFAULT_CONFIG = { apiKey: '', model: 'gemini-3.8-flash', thinkingLevel: 'auto', useSearch: true };
+const DEFAULT_CONFIG = {
+  apiKey: '',
+  model: 'gemini-3.8-flash',
+  thinkingLevel: 'auto',
+  useSearch: true,
+  worldNewsKey: '',
+  useNews: true,
+  newsCount: 40,
+  newsLang: ''
+};
 
 /* ---------- Fecha actual (ancla temporal de los informes) ---------- */
 const DIAS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -115,6 +136,79 @@ function buildGenConfig(thinkingLevel) {
 }
 
 /* ============================================================
+   NOTICIAS REALES (World News API)
+   ============================================================ */
+
+const MESES_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+/* Fecha legible de una noticia ("2026-10-19 16:31:38" → "19 oct 2026 · 16:31"). */
+function formatNewsDate(s) {
+  const t = GeoNews.ts ? GeoNews.ts(s) : Date.parse(s);
+  if (!t || !isFinite(t)) return '';
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return '';
+  return `${d.getDate()} ${MESES_ABBR[d.getMonth()]} ${d.getFullYear()} · ` +
+    `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/* Busca noticias reales y recientes sobre el tema (vía IPC o fetch directo). */
+async function searchNews(topic, lang, cfg) {
+  const query = (GeoNews.buildQuery ? GeoNews.buildQuery(topic) : String(topic || ''));
+  const number = parseInt(cfg.newsCount, 10) || 40;
+  const language = cfg.newsLang || '';
+  let res = null;
+
+  try {
+    if (BRIDGE && BRIDGE.searchNews) {
+      res = await BRIDGE.searchNews({ apiKey: cfg.worldNewsKey, query, language, number });
+    } else {
+      const params = new URLSearchParams();
+      if (query) params.set('text', query);
+      if (language) params.set('language', language);
+      params.set('number', String(number));
+      params.set('sort', 'publish-time');
+      params.set('sort-direction', 'DESC');
+      const r = await fetch('https://api.worldnewsapi.com/search-news?' + params.toString(), {
+        headers: { 'x-api-key': cfg.worldNewsKey, 'Accept': 'application/json' }
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const items = (data.news || [])
+        .map((n) => (GeoNews.normalizeItem ? GeoNews.normalizeItem(n) : n)).filter(Boolean);
+      res = { ok: true, available: data.available || 0, news: items };
+    }
+  } catch (e) {
+    res = { ok: false, error: e.message };
+  }
+
+  if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'error', query };
+
+  const kws = GeoNews.keywords ? GeoNews.keywords(topic) : [];
+  const ranked = GeoNews.rank ? GeoNews.rank(res.news || [], kws, 12) : (res.news || []).slice(0, 12);
+  return { ok: true, query, available: res.available || 0, total: (res.news || []).length, news: ranked };
+}
+
+/* Tarjeta HTML de una noticia. */
+function newsCardHtml(n) {
+  const medio = hostOf(n.url);
+  const fecha = formatNewsDate(n.publishDate);
+  const s = GeoNews.sentimentLabel ? GeoNews.sentimentLabel(n.sentiment) : null;
+  const sent = s ? `<span class="rx-sent ${s.cls}" title="sentimiento ${n.sentiment}">${s.label}</span>` : '';
+  const img = n.image
+    ? `<a class="rx-news-thumb" href="${escapeAttr(n.url)}" target="_blank" rel="noopener"><img src="${escapeAttr(n.image)}" alt="" loading="lazy" onerror="this.closest('.rx-news-thumb').style.display='none'" /></a>`
+    : '';
+  const raw = (n.summary || n.text || '').replace(/\s+/g, ' ').trim();
+  const resumen = raw.slice(0, 240) + (raw.length > 240 ? '…' : '');
+  return `<article class="rx-news-card${n.image ? ' has-img' : ''}">${img}` +
+    `<div class="rx-news-body">` +
+    `<div class="rx-news-meta"><span class="rx-news-src">${escapeHtml(medio)}</span>` +
+    (fecha ? ` · <time>${escapeHtml(fecha)}</time>` : '') + ` ${sent}</div>` +
+    `<h3 class="rx-news-title"><a href="${escapeAttr(n.url)}" target="_blank" rel="noopener">${escapeHtml(n.title || medio)}</a></h3>` +
+    (resumen ? `<p class="rx-news-sum">${escapeHtml(resumen)}</p>` : '') +
+    `</div></article>`;
+}
+
+/* ============================================================
    PLANTILLAS DE PROMPT
    ============================================================ */
 
@@ -179,7 +273,7 @@ const SECTIONS = {
 5. **Impacto Global** — repercusiones geopolíticas, energéticas, financieras y en cadenas de suministro globales.`
 };
 
-function buildPrompt(topic, templateKey, depth, lang, newsUrl, useSearch) {
+function buildPrompt(topic, templateKey, depth, lang, newsUrl, useSearch, newsItems) {
   const depthInstr = depth === 'ejecutivo'
     ? 'Elabora un INFORME EJECUTIVO conciso y directo (aprox. 900\u20131.400 palabras), priorizando lo esencial y las conclusiones accionables.'
     : 'Elabora un DOSSIER EXTENSO Y DETALLADO (m\u00ednimo 2.500\u20134.000 palabras), con desarrollo profundo de cada apartado, datos y matices contrapuestos.';
@@ -208,7 +302,27 @@ function buildPrompt(topic, templateKey, depth, lang, newsUrl, useSearch) {
       `4. Integra todo ello en el informe, citando el enlace original y las nuevas fuentes encontradas.\n`;
   }
 
-  return `${PERSONA}\n\nTu objetivo es realizar una investigaci\u00f3n exhaustiva y ACTUALIZADA sobre el siguiente conflicto, regi\u00f3n o acontecimiento mundial:\n\n"""${topic}"""\n\n${fechaInstr}\n${searchInstr}${newsBlock}\n\nDebes buscar y contrastar las noticias internacionales M\u00c1S RECIENTES con precedentes hist\u00f3ricos documentados.\n\n${SECTIONS[templateKey] || SECTIONS.full7}\n\n${depthInstr}\n${langInstr}\n\n${RIGOR}\n\nComienza directamente con el t\u00edtulo del informe y desarrolla cada apartado con encabezados numerados.`;
+  // Noticias reales recuperadas de la World News API (contexto factual fechado).
+  let newsFeed = '';
+  if (Array.isArray(newsItems) && newsItems.length) {
+    const lines = newsItems.slice(0, 12).map((n, i) => {
+      const medio = hostOf(n.url);
+      const fecha = (n.publishDate || '').slice(0, 16);
+      const resumen = (n.summary || n.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      return `${i + 1}. "${n.title}" — ${medio}${fecha ? ' (' + fecha + ')' : ''}\n   ${resumen}\n   URL: ${n.url}`;
+    });
+    newsFeed = `\n\nNOTICIAS REALES RECIENTES (recuperadas de la World News API para este análisis; úsalas como base factual y cítalas con su medio y fecha):\n${lines.join('\n')}\n\n` +
+      `Instrucciones sobre estas noticias:\n` +
+      `1. Úsalas como punto de partida FACTUAL y fechado; intégralas en el "Panorama Actual".\n` +
+      `2. Amplíalas y verifícalas con la búsqueda de Google y, si procede, con el enlace aportado.\n` +
+      `3. Cita cada noticia por su medio y fecha; si alguna parece sesgada o desactualizada, señálalo.\n` +
+      `4. No inventes datos que no aparezcan en estas noticias ni en tus búsquedas.\n`;
+  }
+
+  // Bloque de metadatos geográficos (para el mapa del informe).
+  const metaInstr = `\n\nMETADATOS GEOGRÁFICOS (obligatorio): al FINAL del informe, después de la conclusión, añade un ÚNICO bloque de código con el lenguaje geointel-meta que contenga EXACTAMENTE un objeto JSON con esta forma:\n\`\`\`geointel-meta\n{"ubicacion":{"nombre":"<lugar central del análisis>","lat":<latitud>,"lng":<longitud>},"puntos":[{"nombre":"<lugar clave>","lat":<latitud>,"lng":<longitud>}]}\n\`\`\`\n- "ubicacion": el lugar central del análisis, con coordenadas decimales reales (WGS84).\n- "puntos": hasta 5 ubicaciones clave mencionadas en el informe (opcional; puede ir vacío).\n- No escribas ningún otro texto dentro del bloque de código.`;
+
+  return `${PERSONA}\n\nTu objetivo es realizar una investigaci\u00f3n exhaustiva y ACTUALIZADA sobre el siguiente conflicto, regi\u00f3n o acontecimiento mundial:\n\n"""${topic}"""\n\n${fechaInstr}\n${searchInstr}${newsBlock}${newsFeed}\n\nDebes buscar y contrastar las noticias internacionales M\u00c1S RECIENTES con precedentes hist\u00f3ricos documentados.\n\n${SECTIONS[templateKey] || SECTIONS.full7}\n\n${depthInstr}\n${langInstr}\n\n${RIGOR}\n\nComienza directamente con el t\u00edtulo del informe y desarrolla cada apartado con encabezados numerados.${metaInstr}`;
 }
 
 /* ============================================================
@@ -477,6 +591,289 @@ function renderSources() {
   sourcesBody.innerHTML = html;
 }
 
+/* ============================================================
+   EXTRAS DEL INFORME: mapa de ubicación + fotos + fuentes
+   ============================================================ */
+
+/* Dominio legible de una URL. */
+function hostOf(u) {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return String(u || ''); }
+}
+
+/* Extrae y elimina el bloque de metadatos geográficos (geointel-meta). */
+function parseMetaBlock(md) {
+  const text = String(md || '');
+  let match = text.match(/```geointel-meta\s*([\s\S]*?)```/i);
+  let inner = match ? match[1] : null;
+  let full = match ? match[0] : null;
+
+  if (!inner) {
+    const re = /```(?:json)?\s*([\s\S]*?)```/gi;
+    let m;
+    while ((m = re.exec(text))) {
+      const body = m[1];
+      if (/["']?ubicacion["']?\s*:/i.test(body) || /["']?lat["']?\s*:/.test(body)) {
+        inner = body; full = m[0]; break;
+      }
+    }
+  }
+  if (!inner) return { meta: null, cleaned: text };
+
+  let meta = null;
+  try { meta = JSON.parse(inner.trim()); } catch (e) { meta = null; }
+  if (!meta || typeof meta !== 'object') return { meta: null, cleaned: text };
+
+  const cleaned = full ? text.replace(full, '').replace(/\n{3,}$/, '\n').replace(/\s+$/, '') : text;
+  return { meta, cleaned };
+}
+
+/* Quita el bloque de metadatos del markdown mostrado y lo guarda. */
+function stripMeta() {
+  const { meta, cleaned } = parseMetaBlock(currentMarkdown);
+  currentMeta = meta || null;
+  if (meta) currentMarkdown = cleaned;
+}
+
+/* Normaliza la lista de puntos geográficos. */
+function normalizePoints(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((p) => ({ nombre: p && (p.nombre || p.name), lat: Number(p && p.lat), lng: Number(p && p.lng) }))
+    .filter((p) => isFinite(p.lat) && isFinite(p.lng));
+}
+
+/* Lista unificada y sin duplicados de las fuentes del informe. */
+function buildSourceItems() {
+  const items = [];
+  const seen = new Set();
+  const add = (url, title, kind) => {
+    if (!url || !/^https?:\/\//i.test(url)) return;
+    const key = url.replace(/#.*$/, '').replace(/\/$/, '');
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({ url, title: (title && String(title).trim()) || hostOf(url), kind });
+  };
+  const g = currentGrounding || {};
+  (g.urls || []).forEach((u) => add(u.url, hostOf(u.url), 'read'));
+  (g.sources || []).forEach((s) => add(s.uri, s.title, 'web'));
+  return items;
+}
+
+/* URLs de las fuentes (para extraer fotos). */
+function collectSourceUrls() {
+  const g = currentGrounding || {};
+  const urls = [];
+  (g.urls || []).forEach((u) => { if (u.url) urls.push(u.url); });
+  (g.sources || []).forEach((s) => { if (s.uri) urls.push(s.uri); });
+  (currentNews || []).forEach((n) => { if (n.url) urls.push(n.url); });
+  return [...new Set(urls.map((u) => u.replace(/#.*$/, '')))];
+}
+
+/* Dibuja el mapa (Leaflet) con el marcador principal y los puntos clave. */
+function renderMap(loc) {
+  const el = document.getElementById('geoMap');
+  if (!el) return;
+  if (!window.L || typeof window.L.map !== 'function') {
+    el.innerHTML = '<div class="rx-map-fallback">Mapa no disponible (Leaflet no cargado).</div>';
+    return;
+  }
+  try {
+    if (mapInstance) { try { mapInstance.remove(); } catch (e) {} mapInstance = null; }
+    const map = window.L.map(el, { scrollWheelZoom: false, zoomControl: true }).setView([loc.lat, loc.lng], 5);
+    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
+    }).addTo(map);
+
+    const mainIcon = window.L.divIcon({ className: 'geo-pin', html: '<span></span>', iconSize: [24, 24], iconAnchor: [12, 12] });
+    window.L.marker([loc.lat, loc.lng], { icon: mainIcon }).addTo(map)
+      .bindPopup('<strong>' + escapeHtml(loc.name || 'Ubicación') + '</strong>');
+
+    const pts = Array.isArray(loc.points) ? loc.points : [];
+    const altIcon = window.L.divIcon({ className: 'geo-pin geo-pin-alt', html: '<span></span>', iconSize: [16, 16], iconAnchor: [8, 8] });
+    const bounds = [[loc.lat, loc.lng]];
+    pts.forEach((p) => {
+      const la = Number(p.lat), ln = Number(p.lng);
+      if (!isFinite(la) || !isFinite(ln)) return;
+      window.L.marker([la, ln], { icon: altIcon }).addTo(map).bindPopup(escapeHtml(p.nombre || ''));
+      bounds.push([la, ln]);
+    });
+    if (bounds.length > 1) { try { map.fitBounds(bounds, { padding: [40, 40], maxZoom: 7 }); } catch (e) {} }
+
+    mapInstance = map;
+    setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 320);
+  } catch (e) {
+    el.innerHTML = '<div class="rx-map-fallback">No se pudo dibujar el mapa.</div>';
+  }
+}
+
+/* Construye y muestra la sección de extras (mapa + fotos + fuentes). */
+function renderReportExtras() {
+  if (!reportExtras) return;
+  const items = buildSourceItems();
+  const queries = (currentGrounding && currentGrounding.queries) || [];
+  const loc = currentLocation;
+  const imgs = currentImages || [];
+  const news = currentNews || [];
+
+  const hasLoc = loc && isFinite(loc.lat) && isFinite(loc.lng);
+  const hasSources = items.length || queries.length;
+  const hasImgs = imgs.length;
+  const hasNews = news.length > 0;
+
+  if (!hasLoc && !hasSources && !hasImgs && !hasNews) {
+    reportExtras.style.display = 'none';
+    reportExtras.innerHTML = '';
+    return;
+  }
+  reportExtras.style.display = '';
+
+  let html = '';
+
+  if (hasNews) {
+    const q = currentNewsQuery ? ` · consulta: \u201c${escapeHtml(currentNewsQuery)}\u201d` : '';
+    html += '<section class="rx-section rx-news-sec">' +
+      '<h2 class="rx-title"><span class="rx-ico">\uD83D\uDCF0</span> Noticias recientes (World News API)</h2>' +
+      '<p class="rx-sub">Últimos titulares recuperados para este análisis' + q + ' · ' + news.length + ' noticia(s).</p>' +
+      '<div class="rx-news-grid">' + news.map(newsCardHtml).join('') + '</div>' +
+      '</section>';
+  }
+
+  if (hasLoc) {
+    html += '<section class="rx-section rx-map-sec">' +
+      '<h2 class="rx-title"><span class="rx-ico">\uD83D\uDCCD</span> Ubicaci\u00f3n geogr\u00e1fica</h2>' +
+      '<div class="rx-map-wrap"><div id="geoMap" class="geo-map"></div>' +
+      '<div class="rx-map-meta"><strong>' + escapeHtml(loc.name || 'Ubicaci\u00f3n del an\u00e1lisis') + '</strong>' +
+      '<span class="rx-coords">' + loc.lat.toFixed(4) + ', ' + loc.lng.toFixed(4) + '</span>' +
+      '<a class="rx-osm-link" href="https://www.openstreetmap.org/?mlat=' + loc.lat + '&mlon=' + loc.lng + '#map=6/' + loc.lat + '/' + loc.lng + '" target="_blank" rel="noopener">Ver en OpenStreetMap</a>' +
+      '</div></div></section>';
+  }
+
+  if (hasImgs) {
+    html += '<section class="rx-section rx-photos-sec">' +
+      '<h2 class="rx-title"><span class="rx-ico">\uD83D\uDDBC\uFE0F</span> Fotograf\u00edas de las fuentes</h2>' +
+      '<div class="rx-gallery">' +
+      imgs.map((im) => '<figure class="rx-photo"><img src="' + im.image + '" alt="' + escapeAttr(im.title || 'foto') + '" loading="lazy" />' +
+        '<figcaption><a href="' + escapeAttr(im.page) + '" target="_blank" rel="noopener">' + escapeHtml(im.title || hostOf(im.page)) + '</a></figcaption></figure>').join('') +
+      '</div></section>';
+  }
+
+  if (hasSources) {
+    html += '<section class="rx-section rx-sources-sec">' +
+      '<h2 class="rx-title"><span class="rx-ico">\uD83D\uDD17</span> Fuentes y referencias</h2>' +
+      '<p class="rx-sub">Noticias, documentos y fuentes en que se bas\u00f3 este informe.</p>';
+    if (items.length) {
+      html += '<ol class="rx-refs">' + items.map((it) => {
+        const badge = it.kind === 'read' ? '<span class="rx-badge">le\u00eddo</span>' : '';
+        return '<li>' + badge + '<a href="' + escapeAttr(it.url) + '" target="_blank" rel="noopener">' + escapeHtml(it.title) + '</a> ' +
+          '<span class="rx-url">' + escapeHtml(it.url) + '</span></li>';
+      }).join('') + '</ol>';
+    }
+    if (queries.length) {
+      html += '<div class="rx-queries"><span class="rx-q-label">B\u00fasquedas realizadas en Google:</span> ' +
+        queries.map((q) => '<span class="rx-query">' + escapeHtml(q) + '</span>').join(' ') + '</div>';
+    }
+    html += '</section>';
+  }
+
+  reportExtras.innerHTML = html;
+  if (hasLoc) renderMap(loc);
+}
+
+/* Geocodifica un nombre de lugar (vía IPC en Electron; fetch en navegador). */
+async function geocodeLocation(query) {
+  const q = String(query || '').trim();
+  if (!q) return null;
+  try {
+    if (BRIDGE && BRIDGE.geocode) {
+      const r = await BRIDGE.geocode(q);
+      if (r && r.ok && isFinite(r.lat) && isFinite(r.lng)) return { name: r.name || q, lat: r.lat, lng: r.lng, points: [] };
+      return null;
+    }
+    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(q.slice(0, 240));
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    if (!Array.isArray(arr) || !arr.length) return null;
+    return { name: arr[0].display_name || q, lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon), points: [] };
+  } catch (e) { return null; }
+}
+
+/* Descarga las fotos (og:image) de las fuentes. */
+async function fetchSourceImages(urls) {
+  const list = (urls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 8);
+  if (!list.length) return [];
+  try {
+    if (BRIDGE && BRIDGE.fetchImages) {
+      const r = await BRIDGE.fetchImages(list);
+      return (r && Array.isArray(r.images)) ? r.images : [];
+    }
+  } catch (e) {}
+  return [];
+}
+
+/* Tras generar el informe: resuelve la ubicación y las fotos. */
+async function finalizeExtras(topic) {
+  try {
+    let loc = null;
+    const u = currentMeta && currentMeta.ubicacion;
+    if (u && isFinite(Number(u.lat)) && isFinite(Number(u.lng))) {
+      loc = { name: u.nombre || topic, lat: Number(u.lat), lng: Number(u.lng), points: normalizePoints(currentMeta.puntos) };
+    } else {
+      loc = await geocodeLocation((u && u.nombre) || topic);
+    }
+    currentLocation = loc;
+    renderReportExtras();
+
+    // Fotos: se prefieren las imágenes de las noticias reales; si no hay,
+    // se extrae la og:image de las fuentes citadas.
+    const newsImgs = (currentNews || []).filter((n) => n.image).slice(0, 6)
+      .map((n) => ({ page: n.url, image: n.image, title: hostOf(n.url) }));
+    if (newsImgs.length) {
+      currentImages = newsImgs;
+      renderReportExtras();
+    } else {
+      const urls = collectSourceUrls();
+      if (urls.length) {
+        const imgs = await fetchSourceImages(urls);
+        if (imgs.length) { currentImages = imgs; renderReportExtras(); }
+      }
+    }
+  } catch (e) { /* los extras son opcionales */ }
+}
+
+/* Markdown completo (informe + extras) para copiar/descargar. */
+function buildFullMarkdown() {
+  let md = currentMarkdown || '';
+  const items = buildSourceItems();
+  const queries = (currentGrounding && currentGrounding.queries) || [];
+  const loc = currentLocation;
+  const imgs = currentImages || [];
+
+  if (loc && isFinite(loc.lat) && isFinite(loc.lng)) {
+    md += '\n\n---\n\n## \uD83D\uDCCD Ubicaci\u00f3n geogr\u00e1fica\n\n**' + (loc.name || 'Ubicaci\u00f3n del an\u00e1lisis') + '** \u2014 ' +
+      loc.lat.toFixed(4) + ', ' + loc.lng.toFixed(4) + '\n\n[Ver en OpenStreetMap](https://www.openstreetmap.org/?mlat=' + loc.lat + '&mlon=' + loc.lng + '#map=6/' + loc.lat + '/' + loc.lng + ')\n';
+  }
+  if (currentNews && currentNews.length) {
+    md += '\n\n## \uD83D\uDCF0 Noticias recientes (World News API)\n\n';
+    currentNews.forEach((n) => {
+      const medio = hostOf(n.url);
+      const fecha = (n.publishDate || '').slice(0, 10);
+      md += '- **[' + (n.title || medio) + '](' + n.url + ')** \u2014 ' + medio + (fecha ? ' (' + fecha + ')' : '') + '\n';
+    });
+  }
+  if (imgs.length) {
+    md += '\n\n## \uD83D\uDDBC\uFE0F Fotograf\u00edas de las fuentes\n\n';
+    imgs.forEach((im) => { md += '- [' + (im.title || hostOf(im.page)) + '](' + im.page + ')\n'; });
+  }
+  if (items.length || queries.length) {
+    md += '\n\n## \uD83D\uDD17 Fuentes y referencias\n\n';
+    items.forEach((it, i) => { md += (i + 1) + '. [' + it.title + '](' + it.url + ')\n'; });
+    if (queries.length) md += '\n**B\u00fasquedas realizadas en Google:** ' + queries.join(' \u00b7 ') + '\n';
+  }
+  return md;
+}
+
 
 /* ============================================================
    UI / FLUJO PRINCIPAL
@@ -529,10 +926,32 @@ async function handleGenerate() {
 
   currentMarkdown = '';
   currentGrounding = { sources: [], queries: [], urls: [], searchWidget: null };
+  currentMeta = null;
+  currentLocation = null;
+  currentImages = [];
+  currentNews = [];
+  currentNewsQuery = '';
+  if (mapInstance) { try { mapInstance.remove(); } catch (e) {} mapInstance = null; }
+  if (reportExtras) { reportExtras.style.display = 'none'; reportExtras.innerHTML = ''; }
   renderSources();
   emptyState.style.display = 'none';
   reportEl.innerHTML = '';
   btnCopy.disabled = btnDownload.disabled = btnPrint.disabled = btnClear.disabled = true;
+
+  // ---- NOTICIAS REALES (World News API) ----
+  if (cfg.useNews && cfg.worldNewsKey) {
+    setOutputState('live', 'Buscando noticias recientes\u2026');
+    try {
+      const nr = await searchNews(topic, lang, cfg);
+      if (nr.ok) {
+        currentNews = nr.news || [];
+        currentNewsQuery = nr.query || '';
+        if (currentNews.length) renderReportExtras();
+      } else {
+        showToast('World News API: ' + (nr.error || 'sin resultados'), 'err');
+      }
+    } catch (e) { /* la búsqueda de noticias es opcional */ }
+  }
 
   // ---- MODO PLANTILLA ----
   if (!cfg.apiKey) {
@@ -542,6 +961,7 @@ async function handleGenerate() {
     setOutputState('done', 'Plantilla generada (sin IA)');
     btnCopy.disabled = btnDownload.disabled = btnPrint.disabled = btnClear.disabled = false;
     showToast('Informe generado en modo plantilla. Añade tu API key de Gemini para el análisis completo.', 'ok');
+    finalizeExtras(topic);
     return;
   }
 
@@ -560,7 +980,7 @@ async function handleGenerate() {
     setOutputState('live', `${m}analizando… ${s}s · ${currentMarkdown.length} caracteres`);
   }, 500);
 
-  const prompt = buildPrompt(topic, templateKey, depth, lang, newsUrl, cfg.useSearch);
+  const prompt = buildPrompt(topic, templateKey, depth, lang, newsUrl, cfg.useSearch, currentNews);
 
   try {
     if (BRIDGE) {
@@ -572,10 +992,12 @@ async function handleGenerate() {
       });
     }
     clearInterval(timer);
+    stripMeta();
     scheduleRender(false);
     if (!currentMarkdown.trim()) throw new Error('El modelo no devolvió contenido. Revisa el modelo o la key.');
     setOutputState('done', 'Informe completado · ' + currentModelUsed);
     showToast('Informe generado con ' + currentModelUsed + '.', 'ok');
+    finalizeExtras(topic);
   } catch (err) {
     clearInterval(timer);
     if (err.name === 'AbortError') {
@@ -601,7 +1023,7 @@ async function handleGenerate() {
 async function copyReport() {
   if (!currentMarkdown) return;
   try {
-    await navigator.clipboard.writeText(currentMarkdown);
+    await navigator.clipboard.writeText(buildFullMarkdown());
     showToast('Informe copiado al portapapeles.', 'ok');
   } catch (e) {
     showToast('No se pudo copiar automáticamente.', 'err');
@@ -612,7 +1034,7 @@ function downloadReport() {
   if (!currentMarkdown) return;
   const topic = topicEl.value.trim().slice(0, 40).replace(/[^\w\-áéíóúñ ]/gi, '').trim().replace(/\s+/g, '_') || 'informe';
   const date = new Date().toISOString().slice(0, 10);
-  const blob = new Blob([currentMarkdown], { type: 'text/markdown;charset=utf-8' });
+  const blob = new Blob([buildFullMarkdown()], { type: 'text/markdown;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `GEOINTEL_${topic}_${date}.md`;
@@ -626,6 +1048,13 @@ function downloadReport() {
 function clearReport() {
   currentMarkdown = '';
   currentGrounding = { sources: [], queries: [], urls: [], searchWidget: null };
+  currentMeta = null;
+  currentLocation = null;
+  currentImages = [];
+  currentNews = [];
+  currentNewsQuery = '';
+  if (mapInstance) { try { mapInstance.remove(); } catch (e) {} mapInstance = null; }
+  if (reportExtras) { reportExtras.style.display = 'none'; reportExtras.innerHTML = ''; }
   reportEl.innerHTML = '';
   searchWidget.innerHTML = '';
   searchWidget.style.display = 'none';
@@ -661,6 +1090,10 @@ function openSettings() {
   modelEl.value = cfg.model || DEFAULT_CONFIG.model;
   thinkingLevelEl.value = cfg.thinkingLevel || DEFAULT_CONFIG.thinkingLevel;
   useSearchEl.checked = cfg.useSearch !== false;
+  worldNewsKeyEl.value = cfg.worldNewsKey || '';
+  useNewsEl.checked = cfg.useNews !== false;
+  newsCountEl.value = String(cfg.newsCount || DEFAULT_CONFIG.newsCount);
+  newsLangEl.value = cfg.newsLang || '';
   settingsModal.classList.add('open');
 }
 
@@ -690,12 +1123,22 @@ $('toggleKey').addEventListener('click', () => {
   $('toggleKey').textContent = isPw ? 'ocultar' : 'ver';
 });
 
+$('toggleNewsKey').addEventListener('click', () => {
+  const isPw = worldNewsKeyEl.type === 'password';
+  worldNewsKeyEl.type = isPw ? 'text' : 'password';
+  $('toggleNewsKey').textContent = isPw ? 'ocultar' : 'ver';
+});
+
 $('btnSaveSettings').addEventListener('click', () => {
   const cfg = {
     apiKey: apiKeyEl.value.trim(),
     model: modelEl.value,
     thinkingLevel: thinkingLevelEl.value || DEFAULT_CONFIG.thinkingLevel,
-    useSearch: useSearchEl.checked
+    useSearch: useSearchEl.checked,
+    worldNewsKey: worldNewsKeyEl.value.trim(),
+    useNews: useNewsEl.checked,
+    newsCount: parseInt(newsCountEl.value, 10) || DEFAULT_CONFIG.newsCount,
+    newsLang: newsLangEl.value || ''
   };
   saveConfig(cfg);
   updateConnBadge();

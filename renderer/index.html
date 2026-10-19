@@ -2,9 +2,10 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https://generativelanguage.googleapis.com https://nominatim.openstreetmap.org https://api.worldnewsapi.com;" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GEOINTEL · Generador de Informes de Inteligencia Geopolítica</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="styles.css" />
 <script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
 </head>
@@ -108,6 +109,9 @@
 
       <article class="report" id="report"></article>
 
+      <!-- Extras del informe: ubicación en mapa + fotos + fuentes -->
+      <div class="report-extras" id="reportExtras" style="display:none"></div>
+
       <section class="sources" id="sourcesPanel" style="display:none">
         <div class="sources-head">
           <span class="live-dot"></span>
@@ -166,9 +170,49 @@
         </span>
       </label>
 
+      <div class="settings-section">
+        <div class="settings-section-title">📰 Noticias reales · World News API</div>
+        <div class="field">
+          <label for="worldNewsKey">API Key de World News API</label>
+          <div class="key-wrap">
+            <input type="password" id="worldNewsKey" placeholder="tu clave de worldnewsapi.com" autocomplete="off" spellcheck="false" />
+            <button class="toggle-key" id="toggleNewsKey" type="button">ver</button>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="newsCount">Nº de noticias a recuperar</label>
+            <select id="newsCount">
+              <option value="20">20</option>
+              <option value="40" selected>40 (recomendado)</option>
+              <option value="60">60</option>
+              <option value="100">100 (máximo)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="newsLang">Idioma de las noticias</label>
+            <select id="newsLang">
+              <option value="" selected>Automático (según el tema)</option>
+              <option value="es">Español</option>
+              <option value="en">English</option>
+              <option value="pt">Português</option>
+              <option value="fr">Français</option>
+            </select>
+          </div>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="useNews" checked />
+          <span>
+            <strong>Buscar noticias reales con World News API</strong>
+            <em>Recupera titulares recientes (con fecha, medio, imagen y sentimiento) para fundamentar el informe y alimentar las secciones de fuentes y fotografías.</em>
+          </span>
+        </label>
+      </div>
+
       <div class="note">
         🌐 <strong>Informes anclados a HOY:</strong> GEOINTEL inyecta la fecha actual en cada informe y activa la <em>búsqueda de Google en tiempo real</em> (Grounding) para citar noticias y hechos recientes en lugar de reciclar datos antiguos.<br>
         🔗 <strong>Enlace de noticia:</strong> si pegas un enlace, la IA lee su contenido (herramienta de contexto de URL) y busca más noticias relacionadas para ampliar y verificar.<br>
+        📰 <strong>Noticias reales (World News API):</strong> GEOINTEL busca titulares recientes sobre el tema, los inyecta en el informe como contexto fechado y los muestra con su medio, fecha, imagen y sentimiento. Consigue una clave gratuita en <a href="https://worldnewsapi.com/" target="_blank" rel="noopener">worldnewsapi.com</a>.<br>
         🔁 <strong>Conmutación automática (fallback):</strong> si el modelo principal falla o no está disponible, GEOINTEL reintenta automáticamente con los siguientes modelos de la cadena (Gemini 4 Argon → 3.8 Flash → 3.6 Flash → 3.5 Flash-Lite → 3.1 Flash-Lite → 3.1 Pro → 3 Flash).<br>
         💡 <strong>Sin API key</strong> la app funciona en <em>modo plantilla</em>: genera el esqueleto completo del informe con tu tema insertado, listo para completar.<br>
         🔑 Consigue tu clave gratuita en
@@ -184,7 +228,9 @@
 
   <div class="toast" id="toast"></div>
 
+  <script src="vendor/leaflet/leaflet.js"></script>
   <script src="vendor/marked.min.js"></script>
+  <script src="news-util.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
